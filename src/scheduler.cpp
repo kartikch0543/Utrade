@@ -296,9 +296,6 @@ void Scheduler::dispatch_ready_tasks(WorkerPool& pool) {
 
         const int attempt_number = ++attempts_by_task_.at(task_id);
         task.state = TaskState::Running;
-        task.has_started = true;
-        task.started_at = std::chrono::steady_clock::now();
-        log_event(task, "STARTED", std::this_thread::get_id(), attempt_number);
         ++running_tasks_;
         to_launch.emplace_back(task_id, attempt_number);
     }
@@ -311,14 +308,23 @@ void Scheduler::dispatch_ready_tasks(WorkerPool& pool) {
 }
 
 void Scheduler::execute_task(const std::string& task_id, int attempt_number) {
-    Task* task = nullptr;
+    std::chrono::milliseconds duration(0);
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        task = tasks_by_id_.at(task_id);
+        Task& task = *tasks_by_id_.at(task_id);
+        task.has_started = true;
+        task.started_at = std::chrono::steady_clock::now();
+        duration = task.duration;
+        log_event(task, "STARTED", std::this_thread::get_id(), attempt_number);
     }
 
-    std::this_thread::sleep_for(task->duration);
-    const bool success = !should_fail(*task, attempt_number);
+    std::this_thread::sleep_for(duration);
+
+    bool success = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        success = !should_fail(*tasks_by_id_.at(task_id), attempt_number);
+    }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
