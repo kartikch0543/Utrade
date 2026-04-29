@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "id": "fetch",
+      "name": "Fetch sources",
+      "priority": 1,
+      "dependencies": [],
+      "duration": 100
+    },
+    {
+      "id": "compile",
+      "name": "Compile modules",
+      "priority": 2,
+      "dependencies": ["fetch"],
+      "duration": 250
+    },
+    {
+      "id": "test",
+      "name": "Run test suite",
+      "priority": 3,
+      "dependencies": ["compile"],
+      "duration": 150
+    }
+  ]
+}
