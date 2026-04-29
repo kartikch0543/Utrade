@@ -8,7 +8,7 @@
 namespace {
 
 void print_usage() {
-    std::cerr << "Usage: scheduler --config <path-to-json> [--workers <count>]\n";
+    std::cerr << "Usage: scheduler --config <path-to-json> [--workers <count>] [--dot <path-to-dot>]\n";
 }
 
 std::size_t parse_worker_count(const std::string& value) {
@@ -33,6 +33,7 @@ std::size_t parse_worker_count(const std::string& value) {
 
 int main(int argc, char** argv) {
     std::string config_path;
+    std::string dot_output_path;
     std::size_t worker_count = 0U;
 
     for (int index = 1; index < argc; ++index) {
@@ -43,6 +44,10 @@ int main(int argc, char** argv) {
         }
         if (argument == "--workers" && index + 1 < argc) {
             worker_count = parse_worker_count(argv[++index]);
+            continue;
+        }
+        if (argument == "--dot" && index + 1 < argc) {
+            dot_output_path = argv[++index];
             continue;
         }
 
@@ -60,7 +65,7 @@ int main(int argc, char** argv) {
             worker_count = 1U;
         }
 
-        scheduler::Scheduler scheduler({config_path, worker_count});
+        scheduler::Scheduler scheduler({config_path, dot_output_path, worker_count});
         return scheduler.run();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

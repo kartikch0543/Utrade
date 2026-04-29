@@ -1,6 +1,8 @@
 #include "graph.h"
 
+#include <algorithm>
 #include <queue>
+#include <sstream>
 #include <stdexcept>
 
 namespace scheduler {
@@ -124,6 +126,35 @@ std::chrono::milliseconds Graph::critical_path_length() const {
     }
 
     return result;
+}
+
+std::string Graph::to_dot() const {
+    std::vector<std::string> ids = task_ids();
+    std::sort(ids.begin(), ids.end());
+
+    std::ostringstream output;
+    output << "digraph scheduler {\n";
+    output << "  rankdir=LR;\n";
+
+    for (const auto& id : ids) {
+        output << "  \"" << id << "\";\n";
+    }
+
+    for (const auto& id : ids) {
+        const auto dependency_it = dependencies_by_task_.find(id);
+        if (dependency_it == dependencies_by_task_.end() || dependency_it->second.empty()) {
+            continue;
+        }
+
+        std::vector<std::string> dependencies = dependency_it->second;
+        std::sort(dependencies.begin(), dependencies.end());
+        for (const auto& dependency_id : dependencies) {
+            output << "  \"" << dependency_id << "\" -> \"" << id << "\";\n";
+        }
+    }
+
+    output << "}\n";
+    return output.str();
 }
 
 }  // namespace scheduler

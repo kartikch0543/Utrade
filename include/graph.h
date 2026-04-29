@@ -21,6 +21,7 @@ public:
     std::vector<std::string> topological_order() const;
     void validate_acyclic() const;
     std::chrono::milliseconds critical_path_length() const;
+    std::string to_dot() const;
 
 private:
     std::unordered_map<std::string, std::vector<std::string>> adjacency_list_;

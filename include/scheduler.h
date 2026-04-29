@@ -16,6 +16,7 @@ namespace scheduler {
 
 struct SchedulerOptions {
     std::string config_path;
+    std::string dot_output_path;
     std::size_t worker_count;
 };
 

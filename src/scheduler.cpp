@@ -109,6 +109,13 @@ int Scheduler::run() {
     load_tasks_from_file();
     Graph graph(tasks_);
     graph.validate_acyclic();
+    if (!options_.dot_output_path.empty()) {
+        std::ofstream dot_output(options_.dot_output_path);
+        if (!dot_output.is_open()) {
+            throw std::runtime_error("Unable to open DOT output path: " + options_.dot_output_path);
+        }
+        dot_output << graph.to_dot();
+    }
     initialize_scheduler_state();
 
     if (options_.worker_count == 0U) {
