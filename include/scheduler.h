@@ -53,6 +53,8 @@ private:
                    std::thread::id thread_id,
                    int attempt_number,
                    const std::string& detail = "") const;
+    void print_summary(const class Graph& graph,
+                       std::chrono::steady_clock::time_point run_finished_at) const;
 
     SchedulerOptions options_;
     std::vector<Task> tasks_;

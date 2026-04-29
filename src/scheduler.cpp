@@ -4,14 +4,13 @@
 #include "nlohmann/json.hpp"
 #include "worker_pool.h"
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <numeric>
-#include <sstream>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -138,6 +137,7 @@ int Scheduler::run() {
     }
 
     pool.shutdown();
+    print_summary(graph, std::chrono::steady_clock::now());
     return failed_tasks_ == 0U ? 0 : 1;
 }
 
@@ -423,6 +423,52 @@ void Scheduler::log_event(const Task& task,
 
     std::lock_guard<std::mutex> lock(log_mutex_);
     std::cout << line.str() << '\n';
+}
+
+void Scheduler::print_summary(const Graph& graph,
+                              std::chrono::steady_clock::time_point run_finished_at) const {
+    std::vector<const Task*> ordered_tasks;
+    ordered_tasks.reserve(tasks_.size());
+    for (const auto& task : tasks_) {
+        ordered_tasks.push_back(&task);
+    }
+
+    std::sort(ordered_tasks.begin(), ordered_tasks.end(), [](const Task* lhs, const Task* rhs) {
+        return lhs->id < rhs->id;
+    });
+
+    const auto total_runtime_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(run_finished_at - run_started_at_).count();
+    const auto critical_path_ms = graph.critical_path_length().count();
+
+    std::ostringstream report;
+    report << "Execution Summary\n";
+    report << "=================\n";
+    report << "Total execution time: " << total_runtime_ms << " ms\n";
+    report << "Critical path length: " << critical_path_ms << " ms\n";
+    report << "Completed: " << completed_tasks_
+           << ", Failed: " << failed_tasks_
+           << ", Cancelled: " << cancelled_tasks_ << "\n\n";
+    report << "Per-task timings:\n";
+
+    for (const auto* task : ordered_tasks) {
+        report << "  - " << task->id
+               << " [" << to_string(task->state) << ']'
+               << " attempts=" << attempts_by_task_.at(task->id);
+
+        if (task->has_started && task->has_finished) {
+            const auto task_runtime_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(task->finished_at - task->started_at).count();
+            report << " duration=" << task_runtime_ms << " ms";
+        } else {
+            report << " duration=n/a";
+        }
+
+        report << '\n';
+    }
+
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    std::cout << report.str();
 }
 
 }  // namespace scheduler
