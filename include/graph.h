@@ -17,6 +17,8 @@ public:
     const std::unordered_map<std::string, std::vector<std::string>>& adjacency_list() const;
     const std::unordered_map<std::string, std::size_t>& indegree_by_task() const;
     std::vector<std::string> task_ids() const;
+    std::vector<std::string> topological_order() const;
+    void validate_acyclic() const;
 
 private:
     std::unordered_map<std::string, std::vector<std::string>> adjacency_list_;

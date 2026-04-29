@@ -1,5 +1,6 @@
 #include "scheduler.h"
 
+#include "graph.h"
 #include "nlohmann/json.hpp"
 
 #include <fstream>
@@ -92,6 +93,7 @@ Scheduler::Scheduler(SchedulerOptions options)
 
 int Scheduler::run() {
     load_tasks_from_file();
+    Graph(tasks_).validate_acyclic();
     return 0;
 }
 
