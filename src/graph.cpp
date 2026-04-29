@@ -12,6 +12,8 @@ Graph::Graph(const std::vector<Task>& tasks) {
     for (const auto& task : tasks) {
         adjacency_list_.emplace(task.id, std::vector<std::string>{});
         indegree_by_task_.emplace(task.id, 0U);
+        duration_by_task_.emplace(task.id, task.duration);
+        dependencies_by_task_.emplace(task.id, task.dependencies);
     }
 
     for (const auto& task : tasks) {
@@ -90,6 +92,38 @@ void Graph::validate_acyclic() const {
     if (ordered.size() != indegree_by_task_.size()) {
         throw std::runtime_error("Dependency graph contains a cycle");
     }
+}
+
+std::chrono::milliseconds Graph::critical_path_length() const {
+    const auto ordered = topological_order();
+    if (ordered.size() != indegree_by_task_.size()) {
+        throw std::runtime_error("Cannot compute critical path for cyclic graph");
+    }
+
+    std::unordered_map<std::string, std::chrono::milliseconds> longest_path;
+    for (const auto& task_id : ordered) {
+        std::chrono::milliseconds best_predecessor(0);
+        const auto dependency_it = dependencies_by_task_.find(task_id);
+        if (dependency_it != dependencies_by_task_.end()) {
+            for (const auto& dependency_id : dependency_it->second) {
+                const auto predecessor_it = longest_path.find(dependency_id);
+                if (predecessor_it != longest_path.end() && predecessor_it->second > best_predecessor) {
+                    best_predecessor = predecessor_it->second;
+                }
+            }
+        }
+
+        longest_path[task_id] = best_predecessor + duration_by_task_.at(task_id);
+    }
+
+    std::chrono::milliseconds result(0);
+    for (const auto& entry : longest_path) {
+        if (entry.second > result) {
+            result = entry.second;
+        }
+    }
+
+    return result;
 }
 
 }  // namespace scheduler
