@@ -1,0 +1,23 @@
+# Build
+build/
+bin/
+*.o
+*.out
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Dependencies
+*.exe
