@@ -89,11 +89,20 @@ Task parse_task(const std::string& file_path, const json& task_json) {
 }  // namespace
 
 Scheduler::Scheduler(SchedulerOptions options)
-    : options_(std::move(options)) {}
+    : options_(std::move(options)),
+      enqueue_sequence_(0U) {}
 
 int Scheduler::run() {
     load_tasks_from_file();
-    Graph(tasks_).validate_acyclic();
+    Graph graph(tasks_);
+    graph.validate_acyclic();
+    initialize_scheduler_state();
+
+    while (!ready_queue_.empty()) {
+        const auto task_id = pop_next_ready_task();
+        mark_task_completed(task_id);
+    }
+
     return 0;
 }
 
@@ -154,6 +163,84 @@ void Scheduler::load_tasks_from_file() {
 
 const std::vector<Task>& Scheduler::tasks() const {
     return tasks_;
+}
+
+bool Scheduler::ReadyTaskCompare::operator()(const ReadyTask& lhs, const ReadyTask& rhs) const {
+    if (lhs.priority != rhs.priority) {
+        return lhs.priority < rhs.priority;
+    }
+
+    if (lhs.insertion_order != rhs.insertion_order) {
+        return lhs.insertion_order > rhs.insertion_order;
+    }
+
+    return lhs.task_id > rhs.task_id;
+}
+
+void Scheduler::initialize_scheduler_state() {
+    Graph graph(tasks_);
+
+    tasks_by_id_.clear();
+    adjacency_list_ = graph.adjacency_list();
+    remaining_dependencies_ = graph.indegree_by_task();
+    ready_queue_ = std::priority_queue<ReadyTask, std::vector<ReadyTask>, ReadyTaskCompare>();
+    enqueue_sequence_ = 0U;
+
+    for (auto& task : tasks_) {
+        task.state = TaskState::Pending;
+        tasks_by_id_[task.id] = &task;
+    }
+
+    for (const auto& entry : remaining_dependencies_) {
+        if (entry.second == 0U) {
+            enqueue_ready_task(entry.first);
+        }
+    }
+}
+
+void Scheduler::enqueue_ready_task(const std::string& task_id) {
+    const auto task_it = tasks_by_id_.find(task_id);
+    if (task_it == tasks_by_id_.end()) {
+        throw std::runtime_error("Cannot enqueue unknown task '" + task_id + "'");
+    }
+
+    ready_queue_.push(ReadyTask{task_it->second->priority, enqueue_sequence_++, task_id});
+}
+
+std::string Scheduler::pop_next_ready_task() {
+    if (ready_queue_.empty()) {
+        throw std::runtime_error("Ready queue is empty");
+    }
+
+    const auto ready_task = ready_queue_.top();
+    ready_queue_.pop();
+    return ready_task.task_id;
+}
+
+void Scheduler::mark_task_completed(const std::string& task_id) {
+    const auto task_it = tasks_by_id_.find(task_id);
+    if (task_it == tasks_by_id_.end()) {
+        throw std::runtime_error("Cannot complete unknown task '" + task_id + "'");
+    }
+
+    task_it->second->state = TaskState::Completed;
+
+    const auto adjacency_it = adjacency_list_.find(task_id);
+    if (adjacency_it == adjacency_list_.end()) {
+        return;
+    }
+
+    for (const auto& dependent_id : adjacency_it->second) {
+        auto& dependency_count = remaining_dependencies_.at(dependent_id);
+        if (dependency_count == 0U) {
+            throw std::runtime_error("Dependency count underflow for task '" + dependent_id + "'");
+        }
+
+        --dependency_count;
+        if (dependency_count == 0U) {
+            enqueue_ready_task(dependent_id);
+        }
+    }
 }
 
 }  // namespace scheduler
