@@ -7,6 +7,7 @@
 #include <chrono>
 #include <functional>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numeric>
@@ -297,12 +298,7 @@ void Scheduler::dispatch_ready_tasks(WorkerPool& pool) {
         task.state = TaskState::Running;
         task.has_started = true;
         task.started_at = std::chrono::steady_clock::now();
-        std::cout << "Task " << task.id
-                  << " started on thread " << std::this_thread::get_id()
-                  << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    task.started_at - run_started_at_)
-                                    .count()
-                  << "ms\n";
+        log_event(task, "STARTED", std::this_thread::get_id(), attempt_number);
         ++running_tasks_;
         to_launch.emplace_back(task_id, attempt_number);
     }
@@ -334,30 +330,17 @@ void Scheduler::execute_task(const std::string& task_id, int attempt_number) {
         if (success) {
             locked_task.state = TaskState::Completed;
             ++completed_tasks_;
-            std::cout << "Task " << locked_task.id
-                      << " completed on thread " << std::this_thread::get_id()
-                      << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        locked_task.finished_at - run_started_at_)
-                                        .count()
-                      << "ms\n";
+            log_event(locked_task, "COMPLETED", std::this_thread::get_id(), attempt_number);
             mark_task_completed(task_id);
         } else if (attempt_number <= locked_task.retry_count) {
-            std::cout << "Task " << locked_task.id
-                      << " failed attempt " << attempt_number
-                      << " on thread " << std::this_thread::get_id()
-                      << " and will be retried\n";
+            log_event(locked_task, "RETRYING", std::this_thread::get_id(), attempt_number, "retry scheduled");
             locked_task.state = TaskState::Pending;
             locked_task.has_finished = false;
             enqueue_ready_task(task_id);
         } else {
             locked_task.state = TaskState::Failed;
             ++failed_tasks_;
-            std::cout << "Task " << locked_task.id
-                      << " failed on thread " << std::this_thread::get_id()
-                      << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        locked_task.finished_at - run_started_at_)
-                                        .count()
-                      << "ms\n";
+            log_event(locked_task, "FAILED", std::this_thread::get_id(), attempt_number);
             cancel_dependents(task_id);
         }
     }
@@ -399,8 +382,34 @@ void Scheduler::cancel_dependents(const std::string& task_id) {
         dependent.has_finished = true;
         dependent.finished_at = std::chrono::steady_clock::now();
         ++cancelled_tasks_;
+        log_event(dependent, "CANCELLED", std::this_thread::get_id(), attempts_by_task_.at(dependent_id),
+                  "blocked by failed dependency");
         cancel_dependents(dependent_id);
     }
+}
+
+void Scheduler::log_event(const Task& task,
+                          const char* event,
+                          std::thread::id thread_id,
+                          int attempt_number,
+                          const std::string& detail) const {
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - run_started_at_).count();
+
+    std::ostringstream line;
+    line << '[' << std::setw(6) << elapsed_ms << " ms] "
+         << "Task " << task.id << ' ' << event
+         << " (priority=" << task.priority
+         << ", thread=" << thread_id
+         << ", attempt=" << attempt_number << ')';
+
+    if (!detail.empty()) {
+        line << " - " << detail;
+    }
+
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    std::cout << line.str() << '\n';
 }
 
 }  // namespace scheduler

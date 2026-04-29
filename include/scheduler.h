@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <iosfwd>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -46,6 +47,11 @@ private:
     bool all_tasks_terminal() const;
     bool should_fail(const Task& task, int attempt_number) const;
     void cancel_dependents(const std::string& task_id);
+    void log_event(const Task& task,
+                   const char* event,
+                   std::thread::id thread_id,
+                   int attempt_number,
+                   const std::string& detail = "") const;
 
     SchedulerOptions options_;
     std::vector<Task> tasks_;
@@ -61,6 +67,7 @@ private:
     std::size_t cancelled_tasks_;
     std::chrono::steady_clock::time_point run_started_at_;
     mutable std::mutex mutex_;
+    mutable std::mutex log_mutex_;
     std::condition_variable state_changed_;
 };
 
