@@ -40,4 +40,4 @@ public:
     std::chrono::steady_clock::time_point finished_at;
 };
 
-}  // namespace scheduler
+}

@@ -76,4 +76,4 @@ void WorkerPool::worker_loop() {
     }
 }
 
-}  // namespace scheduler
+}

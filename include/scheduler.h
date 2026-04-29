@@ -9,6 +9,7 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -47,6 +48,7 @@ private:
     void execute_task(const std::string& task_id, int attempt_number);
     bool all_tasks_terminal() const;
     bool should_fail(const Task& task, int attempt_number) const;
+    bool has_worker_capacity() const;
     void cancel_dependents(const std::string& task_id);
     void log_event(const Task& task,
                    const char* event,
@@ -74,4 +76,4 @@ private:
     std::condition_variable state_changed_;
 };
 
-}  // namespace scheduler
+}

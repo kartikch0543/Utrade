@@ -30,4 +30,4 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> dependencies_by_task_;
 };
 
-}  // namespace scheduler
+}

@@ -32,4 +32,4 @@ private:
     bool stopping_;
 };
 
-}  // namespace scheduler
+}

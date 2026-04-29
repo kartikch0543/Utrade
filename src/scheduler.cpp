@@ -63,11 +63,19 @@ Task parse_task(const std::string& file_path, const json& task_json) {
             throw_config_error(file_path, "task '" + id + "' has non-array dependencies");
         }
 
+        std::unordered_set<std::string> seen_dependencies;
         for (const auto& dependency : task_json.at("dependencies")) {
             if (!dependency.is_string() || dependency.get<std::string>().empty()) {
                 throw_config_error(file_path, "task '" + id + "' has an invalid dependency entry");
             }
-            dependencies.push_back(dependency.get<std::string>());
+
+            const auto dependency_id = dependency.get<std::string>();
+            if (!seen_dependencies.insert(dependency_id).second) {
+                throw_config_error(file_path,
+                                   "task '" + id + "' declares duplicate dependency '" + dependency_id + "'");
+            }
+
+            dependencies.push_back(dependency_id);
         }
     }
 
@@ -94,7 +102,7 @@ Task parse_task(const std::string& file_path, const json& task_json) {
     return task;
 }
 
-}  // namespace
+}
 
 Scheduler::Scheduler(SchedulerOptions options)
     : options_(std::move(options)),
@@ -130,7 +138,7 @@ int Scheduler::run() {
 
         while (!all_tasks_terminal()) {
             state_changed_.wait(lock, [this]() {
-                return !ready_queue_.empty() || all_tasks_terminal();
+                return all_tasks_terminal() || (!ready_queue_.empty() && has_worker_capacity());
             });
             dispatch_ready_tasks(pool);
         }
@@ -216,9 +224,11 @@ void Scheduler::initialize_scheduler_state() {
     Graph graph(tasks_);
 
     tasks_by_id_.clear();
+    tasks_by_id_.reserve(tasks_.size());
     adjacency_list_ = graph.adjacency_list();
     remaining_dependencies_ = graph.indegree_by_task();
     attempts_by_task_.clear();
+    attempts_by_task_.reserve(tasks_.size());
     ready_queue_ = std::priority_queue<ReadyTask, std::vector<ReadyTask>, ReadyTaskCompare>();
     enqueue_sequence_ = 0U;
     running_tasks_ = 0U;
@@ -234,9 +244,10 @@ void Scheduler::initialize_scheduler_state() {
         attempts_by_task_[task.id] = 0;
     }
 
-    for (const auto& entry : remaining_dependencies_) {
-        if (entry.second == 0U) {
-            enqueue_ready_task(entry.first);
+    for (const auto& task : tasks_) {
+        const auto dependency_count_it = remaining_dependencies_.find(task.id);
+        if (dependency_count_it != remaining_dependencies_.end() && dependency_count_it->second == 0U) {
+            enqueue_ready_task(task.id);
         }
     }
 }
@@ -289,7 +300,7 @@ void Scheduler::mark_task_completed(const std::string& task_id) {
 void Scheduler::dispatch_ready_tasks(WorkerPool& pool) {
     std::vector<std::pair<std::string, int>> to_launch;
 
-    while (!ready_queue_.empty()) {
+    while (!ready_queue_.empty() && has_worker_capacity()) {
         const auto task_id = pop_next_ready_task();
         const auto task_it = tasks_by_id_.find(task_id);
         if (task_it == tasks_by_id_.end()) {
@@ -376,6 +387,10 @@ bool Scheduler::should_fail(const Task& task, int attempt_number) const {
     return normalized < task.fail_probability;
 }
 
+bool Scheduler::has_worker_capacity() const {
+    return running_tasks_ < options_.worker_count;
+}
+
 void Scheduler::cancel_dependents(const std::string& task_id) {
     const auto adjacency_it = adjacency_list_.find(task_id);
     if (adjacency_it == adjacency_list_.end()) {
@@ -412,7 +427,7 @@ void Scheduler::log_event(const Task& task,
 
     std::ostringstream line;
     line << '[' << std::setw(6) << elapsed_ms << " ms] "
-         << "Task " << task.id << ' ' << event
+         << "Task " << task.id << " (" << task.name << ") " << event
          << " (priority=" << task.priority
          << ", thread=" << thread_id
          << ", attempt=" << attempt_number << ')';
@@ -453,6 +468,7 @@ void Scheduler::print_summary(const Graph& graph,
 
     for (const auto* task : ordered_tasks) {
         report << "  - " << task->id
+               << " (" << task->name << ')'
                << " [" << to_string(task->state) << ']'
                << " attempts=" << attempts_by_task_.at(task->id);
 
@@ -471,4 +487,4 @@ void Scheduler::print_summary(const Graph& graph,
     std::cout << report.str();
 }
 
-}  // namespace scheduler
+}

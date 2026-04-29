@@ -8,8 +8,10 @@
 namespace scheduler {
 
 Graph::Graph(const std::vector<Task>& tasks) {
-    adjacency_list_.clear();
-    indegree_by_task_.clear();
+    adjacency_list_.reserve(tasks.size());
+    indegree_by_task_.reserve(tasks.size());
+    duration_by_task_.reserve(tasks.size());
+    dependencies_by_task_.reserve(tasks.size());
 
     for (const auto& task : tasks) {
         adjacency_list_.emplace(task.id, std::vector<std::string>{});
@@ -157,4 +159,4 @@ std::string Graph::to_dot() const {
     return output.str();
 }
 
-}  // namespace scheduler
+}

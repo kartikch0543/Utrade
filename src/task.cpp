@@ -43,4 +43,4 @@ bool Task::is_terminal() const {
            state == TaskState::Cancelled;
 }
 
-}  // namespace scheduler
+}

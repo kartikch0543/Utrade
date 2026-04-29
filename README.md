@@ -6,7 +6,7 @@ Production-style concurrent task scheduler engine implemented in modern C++17 wi
 
 ### Why a priority queue?
 
-The scheduler keeps all dependency-satisfied tasks in a priority queue so the highest-priority runnable work is always dispatched first. When priorities tie, the implementation falls back to insertion order and task ID, which keeps scheduling behavior deterministic and debuggable.
+The scheduler keeps dependency-satisfied tasks in a priority queue so the highest-priority runnable work is dispatched first. Dispatch is capped by the worker count, which prevents lower-priority queued work from occupying slots that should be available to higher-priority tasks that become ready later. When priorities tie, the implementation falls back to insertion order and task ID for deterministic behavior.
 
 ### Why Kahn's algorithm?
 
@@ -42,6 +42,19 @@ cmake --build build
 
 ```bash
 ./build/scheduler --config configs/sample_tasks.json --workers 4
+```
+
+### Example output
+
+```text
+[     0 ms] Task fetch (Fetch sources) STARTED (priority=1, thread=..., attempt=1)
+[   100 ms] Task fetch (Fetch sources) COMPLETED (priority=1, thread=..., attempt=1)
+[   100 ms] Task compile (Compile modules) STARTED (priority=2, thread=..., attempt=1)
+Execution Summary
+=================
+Total execution time: 500 ms
+Critical path length: 500 ms
+Completed: 3, Failed: 0, Cancelled: 0
 ```
 
 ### Export the graph to DOT
@@ -90,11 +103,15 @@ Example:
 
 - Circular dependencies, including deep cycles
 - Self-dependency
+- Duplicate dependency entries inside a task
 - Missing dependency IDs
 - Duplicate task IDs
 - Empty files
 - Invalid JSON
 - Zero-task configurations
+- Single-task configurations
+- Deep dependency chains
+- Wide parallel task sets
 - Same-priority tasks
 - `--workers 1`
 - `--workers` greater than the number of tasks

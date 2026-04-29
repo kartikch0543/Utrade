@@ -29,7 +29,7 @@ std::size_t parse_worker_count(const std::string& value) {
     return static_cast<std::size_t>(parsed);
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
     std::string config_path;
