@@ -1,7 +1,48 @@
 #include "graph.h"
 
+#include <stdexcept>
+
 namespace scheduler {
 
-Graph::Graph() = default;
+Graph::Graph(const std::vector<Task>& tasks) {
+    adjacency_list_.clear();
+    indegree_by_task_.clear();
+
+    for (const auto& task : tasks) {
+        adjacency_list_.emplace(task.id, std::vector<std::string>{});
+        indegree_by_task_.emplace(task.id, 0U);
+    }
+
+    for (const auto& task : tasks) {
+        for (const auto& dependency_id : task.dependencies) {
+            auto dependency_it = adjacency_list_.find(dependency_id);
+            if (dependency_it == adjacency_list_.end()) {
+                throw std::runtime_error("Cannot build graph: missing dependency '" + dependency_id + "'");
+            }
+
+            dependency_it->second.push_back(task.id);
+            ++indegree_by_task_.at(task.id);
+        }
+    }
+}
+
+const std::unordered_map<std::string, std::vector<std::string>>& Graph::adjacency_list() const {
+    return adjacency_list_;
+}
+
+const std::unordered_map<std::string, std::size_t>& Graph::indegree_by_task() const {
+    return indegree_by_task_;
+}
+
+std::vector<std::string> Graph::task_ids() const {
+    std::vector<std::string> ids;
+    ids.reserve(indegree_by_task_.size());
+
+    for (const auto& entry : indegree_by_task_) {
+        ids.push_back(entry.first);
+    }
+
+    return ids;
+}
 
 }  // namespace scheduler
