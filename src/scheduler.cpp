@@ -2,10 +2,18 @@
 
 #include "graph.h"
 #include "nlohmann/json.hpp"
+#include "worker_pool.h"
 
+#include <chrono>
+#include <functional>
 #include <fstream>
+#include <iostream>
+#include <limits>
+#include <numeric>
+#include <sstream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_set>
 
 namespace scheduler {
@@ -90,7 +98,11 @@ Task parse_task(const std::string& file_path, const json& task_json) {
 
 Scheduler::Scheduler(SchedulerOptions options)
     : options_(std::move(options)),
-      enqueue_sequence_(0U) {}
+      enqueue_sequence_(0U),
+      running_tasks_(0U),
+      completed_tasks_(0U),
+      failed_tasks_(0U),
+      cancelled_tasks_(0U) {}
 
 int Scheduler::run() {
     load_tasks_from_file();
@@ -98,12 +110,27 @@ int Scheduler::run() {
     graph.validate_acyclic();
     initialize_scheduler_state();
 
-    while (!ready_queue_.empty()) {
-        const auto task_id = pop_next_ready_task();
-        mark_task_completed(task_id);
+    if (options_.worker_count == 0U) {
+        throw std::runtime_error("Worker count must be greater than zero");
     }
 
-    return 0;
+    run_started_at_ = std::chrono::steady_clock::now();
+    WorkerPool pool(options_.worker_count);
+
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        dispatch_ready_tasks(pool);
+
+        while (!all_tasks_terminal()) {
+            state_changed_.wait(lock, [this]() {
+                return !ready_queue_.empty() || all_tasks_terminal();
+            });
+            dispatch_ready_tasks(pool);
+        }
+    }
+
+    pool.shutdown();
+    return failed_tasks_ == 0U ? 0 : 1;
 }
 
 void Scheduler::load_tasks_from_file() {
@@ -183,12 +210,20 @@ void Scheduler::initialize_scheduler_state() {
     tasks_by_id_.clear();
     adjacency_list_ = graph.adjacency_list();
     remaining_dependencies_ = graph.indegree_by_task();
+    attempts_by_task_.clear();
     ready_queue_ = std::priority_queue<ReadyTask, std::vector<ReadyTask>, ReadyTaskCompare>();
     enqueue_sequence_ = 0U;
+    running_tasks_ = 0U;
+    completed_tasks_ = 0U;
+    failed_tasks_ = 0U;
+    cancelled_tasks_ = 0U;
 
     for (auto& task : tasks_) {
         task.state = TaskState::Pending;
+        task.has_started = false;
+        task.has_finished = false;
         tasks_by_id_[task.id] = &task;
+        attempts_by_task_[task.id] = 0;
     }
 
     for (const auto& entry : remaining_dependencies_) {
@@ -240,6 +275,131 @@ void Scheduler::mark_task_completed(const std::string& task_id) {
         if (dependency_count == 0U) {
             enqueue_ready_task(dependent_id);
         }
+    }
+}
+
+void Scheduler::dispatch_ready_tasks(WorkerPool& pool) {
+    std::vector<std::pair<std::string, int>> to_launch;
+
+    while (!ready_queue_.empty()) {
+        const auto task_id = pop_next_ready_task();
+        const auto task_it = tasks_by_id_.find(task_id);
+        if (task_it == tasks_by_id_.end()) {
+            throw std::runtime_error("Cannot dispatch unknown task '" + task_id + "'");
+        }
+
+        Task& task = *task_it->second;
+        if (task.state != TaskState::Pending) {
+            continue;
+        }
+
+        const int attempt_number = ++attempts_by_task_.at(task_id);
+        task.state = TaskState::Running;
+        task.has_started = true;
+        task.started_at = std::chrono::steady_clock::now();
+        std::cout << "Task " << task.id
+                  << " started on thread " << std::this_thread::get_id()
+                  << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    task.started_at - run_started_at_)
+                                    .count()
+                  << "ms\n";
+        ++running_tasks_;
+        to_launch.emplace_back(task_id, attempt_number);
+    }
+
+    for (const auto& launch : to_launch) {
+        pool.submit([this, launch]() {
+            execute_task(launch.first, launch.second);
+        });
+    }
+}
+
+void Scheduler::execute_task(const std::string& task_id, int attempt_number) {
+    Task* task = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        task = tasks_by_id_.at(task_id);
+    }
+
+    std::this_thread::sleep_for(task->duration);
+    const bool success = !should_fail(*task, attempt_number);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Task& locked_task = *tasks_by_id_.at(task_id);
+        locked_task.has_finished = true;
+        locked_task.finished_at = std::chrono::steady_clock::now();
+        --running_tasks_;
+
+        if (success) {
+            locked_task.state = TaskState::Completed;
+            ++completed_tasks_;
+            std::cout << "Task " << locked_task.id
+                      << " completed on thread " << std::this_thread::get_id()
+                      << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        locked_task.finished_at - run_started_at_)
+                                        .count()
+                      << "ms\n";
+            mark_task_completed(task_id);
+        } else if (attempt_number <= locked_task.retry_count) {
+            std::cout << "Task " << locked_task.id
+                      << " failed attempt " << attempt_number
+                      << " on thread " << std::this_thread::get_id()
+                      << " and will be retried\n";
+            locked_task.state = TaskState::Pending;
+            locked_task.has_finished = false;
+            enqueue_ready_task(task_id);
+        } else {
+            locked_task.state = TaskState::Failed;
+            ++failed_tasks_;
+            std::cout << "Task " << locked_task.id
+                      << " failed on thread " << std::this_thread::get_id()
+                      << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        locked_task.finished_at - run_started_at_)
+                                        .count()
+                      << "ms\n";
+            cancel_dependents(task_id);
+        }
+    }
+
+    state_changed_.notify_all();
+}
+
+bool Scheduler::all_tasks_terminal() const {
+    return completed_tasks_ + failed_tasks_ + cancelled_tasks_ == tasks_.size() && running_tasks_ == 0U;
+}
+
+bool Scheduler::should_fail(const Task& task, int attempt_number) const {
+    if (task.fail_probability <= 0.0) {
+        return false;
+    }
+
+    const auto fingerprint =
+        static_cast<unsigned long long>(std::hash<std::string>{}(task.id + ":" + std::to_string(attempt_number)));
+    const double normalized = static_cast<double>(fingerprint % 10000ULL) / 10000.0;
+    return normalized < task.fail_probability;
+}
+
+void Scheduler::cancel_dependents(const std::string& task_id) {
+    const auto adjacency_it = adjacency_list_.find(task_id);
+    if (adjacency_it == adjacency_list_.end()) {
+        return;
+    }
+
+    for (const auto& dependent_id : adjacency_it->second) {
+        Task& dependent = *tasks_by_id_.at(dependent_id);
+        if (dependent.state == TaskState::Completed ||
+            dependent.state == TaskState::Failed ||
+            dependent.state == TaskState::Cancelled ||
+            dependent.state == TaskState::Running) {
+            continue;
+        }
+
+        dependent.state = TaskState::Cancelled;
+        dependent.has_finished = true;
+        dependent.finished_at = std::chrono::steady_clock::now();
+        ++cancelled_tasks_;
+        cancel_dependents(dependent_id);
     }
 }
 
